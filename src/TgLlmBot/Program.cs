@@ -146,7 +146,7 @@ public partial class Program
                 .Build();
         });
         // LLM Chat
-        builder.Services.AddSingleton(new DefaultLlmChatHandlerOptions(config.Telegram.BotName));
+        builder.Services.AddSingleton(new DefaultLlmChatHandlerOptions(config.Telegram.BotName, config.Llm.DefaultResponse));
         builder.Services.AddSingleton<ILlmChatHandler, DefaultLlmChatHandler>();
         return builder;
     }

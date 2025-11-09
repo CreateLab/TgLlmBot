@@ -8,12 +8,10 @@ public class LlmConfiguration
     private LlmConfiguration(
         Uri endpoint,
         string apiKey,
-        string model)
+        string model,
+        string defaultResponse)
     {
         ArgumentNullException.ThrowIfNull(endpoint);
-        ArgumentNullException.ThrowIfNull(apiKey);
-        ArgumentNullException.ThrowIfNull(model);
-
         if (string.IsNullOrEmpty(apiKey))
         {
             throw new ArgumentException("Value cannot be null or empty.", nameof(apiKey));
@@ -24,15 +22,21 @@ public class LlmConfiguration
             throw new ArgumentException("Value cannot be null or empty.", nameof(model));
         }
 
+        if (string.IsNullOrEmpty(defaultResponse))
+        {
+            throw new ArgumentException("Value cannot be null or empty.", nameof(defaultResponse));
+        }
 
         Endpoint = endpoint;
         ApiKey = apiKey;
         Model = model;
+        DefaultResponse = defaultResponse;
     }
 
     public Uri Endpoint { get; }
     public string ApiKey { get; }
     public string Model { get; }
+    public string DefaultResponse { get; }
 
     public static LlmConfiguration Convert(LlmOptions options)
     {
@@ -45,6 +49,7 @@ public class LlmConfiguration
         return new(
             typedEndpoint,
             options.ApiKey,
-            options.Model);
+            options.Model,
+            options.DefaultResponse);
     }
 }

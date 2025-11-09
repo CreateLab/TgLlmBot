@@ -16,4 +16,8 @@ public class LlmOptions
     [Required]
     [MaxLength(10000)]
     public string Model { get; set; } = default!;
+
+    [Required]
+    [MaxLength(10000)]
+    public string DefaultResponse { get; set; } = default!;
 }

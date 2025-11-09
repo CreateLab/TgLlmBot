@@ -56,10 +56,10 @@ public partial class DefaultLlmChatHandler : ILlmChatHandler
         Log.ProcessingLlmRequest(_logger, command.Message.From?.Username, command.Message.From?.Id);
 
         byte[]? image = null;
-        // if (command.Message.Photo?.Length > 0)
-        // {
-        //     image = await DownloadPhotoAsync(command.Message.Photo, cancellationToken);
-        // }
+        if (command.Message.Photo?.Length > 0)
+        {
+            image = await DownloadPhotoAsync(command.Message.Photo, cancellationToken);
+        }
 
         var context = BuildContext(command, image);
         var llmResponse = await _chatClient.GetResponseAsync(context, new()
@@ -67,10 +67,16 @@ public partial class DefaultLlmChatHandler : ILlmChatHandler
             ConversationId = Guid.NewGuid().ToString("N"),
             ToolMode = ChatToolMode.None
         }, cancellationToken);
+        // ReSharper disable once ConditionalAccessQualifierIsNonNullableAccordingToAPIContract
+        var llmResponseText = llmResponse.Text?.Trim();
+        if (string.IsNullOrWhiteSpace(llmResponseText))
+        {
+            llmResponseText = _options.DefaultResponse;
+        }
 
         try
         {
-            var markdownReplyText = _telegramMarkdownConverter.ConvertToTelegramMarkdown(llmResponse.Text);
+            var markdownReplyText = _telegramMarkdownConverter.ConvertToTelegramMarkdown(llmResponseText);
             await _bot.SendMessage(
                 command.Message.Chat,
                 markdownReplyText,
@@ -86,7 +92,7 @@ public partial class DefaultLlmChatHandler : ILlmChatHandler
             Log.MarkdownConversionOrSendFailed(_logger, ex);
             await _bot.SendMessage(
                 command.Message.Chat,
-                llmResponse.Text,
+                llmResponseText,
                 ParseMode.None,
                 new()
                 {
