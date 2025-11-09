@@ -4,6 +4,8 @@
         <File Path=".gitignore"/>
         <File Path="global.json"/>
         <File Path="LICENSE"/>
+        <File Path="Directory.Build.props"/>
+        <File Path="TgLlmBot.slnx.DotSettings"/>
     </Folder>
     <Folder Name="/root/src/">
         <Project Path="src/TgLlmBot/TgLlmBot.csproj"/>
