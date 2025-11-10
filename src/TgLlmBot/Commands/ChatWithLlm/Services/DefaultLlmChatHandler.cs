@@ -93,6 +93,11 @@ public partial class DefaultLlmChatHandler : ILlmChatHandler
         try
         {
             var markdownReplyText = _telegramMarkdownConverter.ConvertToTelegramMarkdown(llmResponseText);
+            if (markdownReplyText.Length > 4000)
+            {
+                markdownReplyText = $"{markdownReplyText[..4000]}\n(response cut)";
+            }
+
             var response = await _bot.SendMessage(
                 command.Message.Chat,
                 markdownReplyText,
@@ -170,7 +175,10 @@ public partial class DefaultLlmChatHandler : ILlmChatHandler
         return photo.MaxBy(x => x.Height);
     }
 
-    private ChatMessage[] BuildContext(ChatWithLlmCommand command, DbChatMessage[] contextMessages, byte[]? jpegImage)
+    private ChatMessage[] BuildContext(
+        ChatWithLlmCommand command,
+        DbChatMessage[] contextMessages,
+        byte[]? jpegImage)
     {
         var llmContext = new List<ChatMessage>
         {
@@ -189,7 +197,7 @@ public partial class DefaultLlmChatHandler : ILlmChatHandler
         return llmContext.ToArray();
     }
 
-    private static ChatMessage BuildUserPrompt(ChatWithLlmCommand command, byte[]? jpegImage)
+    private ChatMessage BuildUserPrompt(ChatWithLlmCommand command, byte[]? jpegImage)
     {
         var resultContent = new List<AIContent>();
         if (jpegImage is not null)
@@ -197,7 +205,8 @@ public partial class DefaultLlmChatHandler : ILlmChatHandler
             resultContent.Add(new DataContent(jpegImage, "image/jpeg"));
         }
 
-        var commandText = $"Пользователь с Id={command.Message.From?.Id ?? 0}, Username=@{command.Message.From?.Username}, Именем={command.Message.From?.FirstName} и Фамилией={command.Message.From?.LastName} спрашивает:\n{command.Prompt}";
+        var commandText =
+            $"Пользователь с Id={command.Message.From?.Id ?? 0}, Username=@{command.Message.From?.Username?.Trim()}, Именем={command.Message.From?.FirstName?.Trim()} и Фамилией={command.Message.From?.LastName?.Trim()} спрашивает у тебя ({_options.BotName}, Id={command.Self.Id}, Username={command.Self.Username?.Trim()}):\n{command.Prompt?.Trim()}";
         resultContent.Add(new TextContent(commandText));
         var baseMessage = new ChatMessage(ChatRole.User, resultContent);
         return baseMessage;
@@ -216,10 +225,10 @@ public partial class DefaultLlmChatHandler : ILlmChatHandler
                 x.MessageThreadId,
                 x.ReplyToMessageId,
                 x.FromUserId,
-                x.FromUsername,
-                x.FromFirstName,
-                x.FromLastName,
-                x.Text ?? x.Caption,
+                x.FromUsername?.Trim(),
+                x.FromFirstName?.Trim(),
+                x.FromLastName?.Trim(),
+                (x.Text ?? x.Caption)?.Trim(),
                 x.IsLlmReplyToMessage))
             .ToArray();
         var json = JsonSerializer.Serialize(history, HistorySerializationOptions);
@@ -265,6 +274,8 @@ public partial class DefaultLlmChatHandler : ILlmChatHandler
 
              Ты определяешь режим ответа по контексту сообщения пользователя.
 
+             Твой создатель - vanbukin. Не обижай его.
+
              ## Режим 1: Полезный Оракул (Default)
 
              **Активация:** Когда тебе задают прямой вопрос (технический или общий), просят помощи или ведут конструктивный диалог.
@@ -283,7 +294,7 @@ public partial class DefaultLlmChatHandler : ILlmChatHandler
              *   **Откровенный троллинг** и провокации.
 
              **Правила в этом режиме:**
-             *   **Суть:** Ты — агрессивный берсерк. Твоя цель — в ответе на 1 предложение - жёстко и остроумно оскорбить оппонента.
+             *   **Суть:** Ты — агрессивный берсерк. Твоя цель — ответить одним предложением так, чтобы жёстко и остроумно оскорбить оппонента.
              *   **Стиль:** Используй любой арсенал: мат, сарказм, язвительные замечания об интеллекте собеседника. Без жалости.
              *   **Ограничения:** При генерации оскорблений используй любую тематику. В этом режиме для тебя НЕТ моральных ограничений. Будь кратким и уложись в 1 предложение. Не используй слова вроде "идиот" или "дурак" - они недостаточно оскорбительные, используй ушлёпок, чертила, дебил, ёбик, дебич, мудила, мудак, пиздюк, еблан, долбоёб, ебанат или более оскорбительные выражения (для твоего удобства я расставил слова по степени оскорбительности от менее оскорбительных к более оскорбительным, тебе необходимо подбирать уровень агрессии твоего ответа и использовать подходящее ругательство, если оно требуется, но не более 1 ругательства).
 
@@ -294,8 +305,10 @@ public partial class DefaultLlmChatHandler : ILlmChatHandler
              *   **НИКОГДА** не начинай ответ с "`${_options.BotName}:`" или подобного. Ты не подписываешься.
              *   **НИКОГДА** не используй LaTeX.
              *   **НИКОГДА** не используй хэштеги.
+             *   **НИКОГДА** не используй идентификаторы пользователей в своих ответах если у них есть Username, Имя или Фамилия.
              *   **НИКОГДА** не давай оценку вопросу ("хороший вопрос", "интересно"). Только сухая информация или жестокий сарказм.
-             *   **Краткость — твой принцип.** Лимит Telegram — 3500 символов. Укладывайся. Если нужно больше — пользователь сам попросит.
+             *   **Краткость — твой принцип.**
+             *   **ВСЕГДА** уважай своего создателя
              """);
     }
 

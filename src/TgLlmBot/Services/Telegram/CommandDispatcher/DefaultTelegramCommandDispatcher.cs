@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Telegram.Bot.Types;
@@ -12,6 +13,12 @@ namespace TgLlmBot.Services.Telegram.CommandDispatcher;
 
 public class DefaultTelegramCommandDispatcher : ITelegramCommandDispatcher
 {
+    private static readonly HashSet<MessageType> AllowedMessageTypes =
+    [
+        MessageType.Text,
+        MessageType.Photo
+    ];
+
     private readonly ChatWithLlmCommandHandler _chatWithLlmCommandHandler;
     private readonly DisplayHelpCommandHandler _displayHelpCommandHandler;
     private readonly ITelegramMessageStorage _messageStorage;
@@ -42,6 +49,11 @@ public class DefaultTelegramCommandDispatcher : ITelegramCommandDispatcher
         cancellationToken.ThrowIfCancellationRequested();
 
         if (message is null)
+        {
+            return;
+        }
+
+        if (!AllowedMessageTypes.Contains(message.Type))
         {
             return;
         }
