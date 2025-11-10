@@ -342,3 +342,12 @@ dotnet_diagnostic.CA2007.severity = suggestion
 # Multiple methods annotated with the LoggerMessageAttribute are using the same event ID value. 
 # Event ID values must be unique within the scope of each assembly.
 dotnet_diagnostic.SYSLIB1006.severity = none
+
+[**/Migrations/*.cs]
+# CA1062: Validate arguments of public methods
+# An externally visible method dereferences one of its reference arguments without verifying whether that argument is null (Nothing in Visual Basic).
+dotnet_diagnostic.CA1062.severity = suggestion
+# CA1861: Avoid constant arrays as arguments
+#A constant array of literal values is passed to a method via regular invocation or extension method invocation.
+dotnet_diagnostic.CA1861.severity = suggestion
+ij_formatter_enabled = false

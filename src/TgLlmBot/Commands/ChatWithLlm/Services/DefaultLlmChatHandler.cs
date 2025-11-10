@@ -4,7 +4,9 @@ using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.IO;
 using System.Linq;
-using System.Text;
+using System.Text.Encodings.Web;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -12,6 +14,8 @@ using Microsoft.Extensions.Logging;
 using Telegram.Bot;
 using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums;
+using TgLlmBot.DataAccess.Models;
+using TgLlmBot.Services.DataAccess;
 using TgLlmBot.Services.Telegram.Markdown;
 
 namespace TgLlmBot.Commands.ChatWithLlm.Services;
@@ -19,11 +23,19 @@ namespace TgLlmBot.Commands.ChatWithLlm.Services;
 public partial class DefaultLlmChatHandler : ILlmChatHandler
 {
     private static readonly CultureInfo RuCulture = new("ru-RU");
+
+    private static readonly JsonSerializerOptions HistorySerializationOptions = new(JsonSerializerDefaults.General)
+    {
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+        DefaultIgnoreCondition = JsonIgnoreCondition.Never,
+        WriteIndented = false
+    };
+
     private readonly TelegramBotClient _bot;
     private readonly IChatClient _chatClient;
     private readonly ILogger<DefaultLlmChatHandler> _logger;
-
     private readonly DefaultLlmChatHandlerOptions _options;
+    private readonly ITelegramMessageStorage _storage;
     private readonly ITelegramMarkdownConverter _telegramMarkdownConverter;
     private readonly TimeProvider _timeProvider;
 
@@ -33,7 +45,8 @@ public partial class DefaultLlmChatHandler : ILlmChatHandler
         TelegramBotClient bot,
         IChatClient chatClient,
         ITelegramMarkdownConverter telegramMarkdownConverter,
-        ILogger<DefaultLlmChatHandler> logger)
+        ILogger<DefaultLlmChatHandler> logger,
+        ITelegramMessageStorage storage)
     {
         ArgumentNullException.ThrowIfNull(options);
         ArgumentNullException.ThrowIfNull(timeProvider);
@@ -41,12 +54,14 @@ public partial class DefaultLlmChatHandler : ILlmChatHandler
         ArgumentNullException.ThrowIfNull(chatClient);
         ArgumentNullException.ThrowIfNull(telegramMarkdownConverter);
         ArgumentNullException.ThrowIfNull(logger);
+        ArgumentNullException.ThrowIfNull(storage);
         _options = options;
         _timeProvider = timeProvider;
         _bot = bot;
         _chatClient = chatClient;
         _telegramMarkdownConverter = telegramMarkdownConverter;
         _logger = logger;
+        _storage = storage;
     }
 
     [SuppressMessage("Design", "CA1031:Do not catch general exception types")]
@@ -54,6 +69,7 @@ public partial class DefaultLlmChatHandler : ILlmChatHandler
     {
         ArgumentNullException.ThrowIfNull(command);
         Log.ProcessingLlmRequest(_logger, command.Message.From?.Username, command.Message.From?.Id);
+        var contextMessages = await _storage.SelectContextMessagesAsync(command.Message, cancellationToken);
 
         byte[]? image = null;
         if (command.Message.Photo?.Length > 0)
@@ -61,7 +77,7 @@ public partial class DefaultLlmChatHandler : ILlmChatHandler
             image = await DownloadPhotoAsync(command.Message.Photo, cancellationToken);
         }
 
-        var context = BuildContext(command, image);
+        var context = BuildContext(command, contextMessages, image);
         var llmResponse = await _chatClient.GetResponseAsync(context, new()
         {
             ConversationId = Guid.NewGuid().ToString("N"),
@@ -77,7 +93,7 @@ public partial class DefaultLlmChatHandler : ILlmChatHandler
         try
         {
             var markdownReplyText = _telegramMarkdownConverter.ConvertToTelegramMarkdown(llmResponseText);
-            await _bot.SendMessage(
+            var response = await _bot.SendMessage(
                 command.Message.Chat,
                 markdownReplyText,
                 ParseMode.MarkdownV2,
@@ -86,11 +102,12 @@ public partial class DefaultLlmChatHandler : ILlmChatHandler
                     MessageId = command.Message.MessageId
                 },
                 cancellationToken: cancellationToken);
+            await _storage.StoreMessageAsync(response, command.Self, cancellationToken);
         }
         catch (Exception ex)
         {
             Log.MarkdownConversionOrSendFailed(_logger, ex);
-            await _bot.SendMessage(
+            var response = await _bot.SendMessage(
                 command.Message.Chat,
                 llmResponseText,
                 ParseMode.None,
@@ -99,6 +116,7 @@ public partial class DefaultLlmChatHandler : ILlmChatHandler
                     MessageId = command.Message.MessageId
                 },
                 cancellationToken: cancellationToken);
+            await _storage.StoreMessageAsync(response, command.Self, cancellationToken);
         }
     }
 
@@ -152,15 +170,23 @@ public partial class DefaultLlmChatHandler : ILlmChatHandler
         return photo.MaxBy(x => x.Height);
     }
 
-    private ChatMessage[] BuildContext(ChatWithLlmCommand command, byte[]? jpegImage)
+    private ChatMessage[] BuildContext(ChatWithLlmCommand command, DbChatMessage[] contextMessages, byte[]? jpegImage)
     {
-        var systemPrompt = BuildSystemPrompt();
-        var userPrompt = BuildUserPrompt(command, jpegImage);
-        return
-        [
-            systemPrompt,
-            userPrompt
-        ];
+        var llmContext = new List<ChatMessage>
+        {
+            BuildSystemPrompt()
+        };
+        var historyContext = BuildHistoryContext(contextMessages);
+        if (historyContext.Length > 0)
+        {
+            foreach (var chatMessage in historyContext)
+            {
+                llmContext.Add(chatMessage);
+            }
+        }
+
+        llmContext.Add(BuildUserPrompt(command, jpegImage));
+        return llmContext.ToArray();
     }
 
     private static ChatMessage BuildUserPrompt(ChatWithLlmCommand command, byte[]? jpegImage)
@@ -171,19 +197,51 @@ public partial class DefaultLlmChatHandler : ILlmChatHandler
             resultContent.Add(new DataContent(jpegImage, "image/jpeg"));
         }
 
-        var userName = command.Message.From?.Username;
-        var builder = new StringBuilder();
-        if (!string.IsNullOrWhiteSpace(userName))
-        {
-            builder.Append('@');
-            builder.Append(userName);
-            builder.AppendLine(" спрашивает:");
-        }
-
-        builder.AppendLine(command.Prompt);
-        resultContent.Add(new TextContent(builder.ToString()));
+        var commandText = $"Пользователь с Id={command.Message.From?.Id ?? 0}, Username=@{command.Message.From?.Username}, Именем={command.Message.From?.FirstName} и Фамилией={command.Message.From?.LastName} спрашивает:\n{command.Prompt}";
+        resultContent.Add(new TextContent(commandText));
         var baseMessage = new ChatMessage(ChatRole.User, resultContent);
         return baseMessage;
+    }
+
+    private static ChatMessage[] BuildHistoryContext(DbChatMessage[] contextMessages)
+    {
+        if (contextMessages.Length is 0)
+        {
+            return [];
+        }
+
+        var history = contextMessages.Select(x => new JsonHistoryMessage(
+                new DateTimeOffset(x.Date.Ticks, TimeSpan.Zero).ToUniversalTime(),
+                x.MessageId,
+                x.MessageThreadId,
+                x.ReplyToMessageId,
+                x.FromUserId,
+                x.FromUsername,
+                x.FromFirstName,
+                x.FromLastName,
+                x.Text ?? x.Caption,
+                x.IsLlmReplyToMessage))
+            .ToArray();
+        var json = JsonSerializer.Serialize(history, HistorySerializationOptions);
+        return
+        [
+            new(ChatRole.User, $"""
+                                Сейчас я тебе пришлю историю чата в формате JSON, где
+                                {nameof(JsonHistoryMessage.DateTimeUtc)} - дата сообщения в UTC,
+                                {nameof(JsonHistoryMessage.MessageId)} - Id сообщения
+                                {nameof(JsonHistoryMessage.MessageThreadId)} - Id сообщения, с которого начался тред с цепочкой реплаев
+                                {nameof(JsonHistoryMessage.ReplyToMessageId)} - Id сообщения, на которое делается реплай
+                                {nameof(JsonHistoryMessage.FromUserId)} - Id автора сообщения
+                                {nameof(JsonHistoryMessage.FromUsername)} - Username автора сообщения
+                                {nameof(JsonHistoryMessage.FromFirstName)} - Имя автора сообщения
+                                {nameof(JsonHistoryMessage.FromLastName)} - Фамилия автора сообщения
+                                {nameof(JsonHistoryMessage.Text)} - текст сообщения
+                                {nameof(JsonHistoryMessage.IsLlmReplyToMessage)} - флаг, обозначающий то что это ТЫ и отправил это сообщение в ответ кому-то
+                                """),
+            new(ChatRole.Assistant, "Присылай"),
+            new(ChatRole.User, json),
+            new(ChatRole.Assistant, "Учту при формировании ответа")
+        ];
     }
 
     private ChatMessage BuildSystemPrompt()
@@ -237,8 +295,36 @@ public partial class DefaultLlmChatHandler : ILlmChatHandler
              *   **НИКОГДА** не используй LaTeX.
              *   **НИКОГДА** не используй хэштеги.
              *   **НИКОГДА** не давай оценку вопросу ("хороший вопрос", "интересно"). Только сухая информация или жестокий сарказм.
-             *   **Краткость — твой принцип.** Лимит Telegram — 2000 символов. Укладывайся. Если нужно больше — пользователь сам попросит.
+             *   **Краткость — твой принцип.** Лимит Telegram — 3500 символов. Укладывайся. Если нужно больше — пользователь сам попросит.
              """);
+    }
+
+    private sealed class JsonHistoryMessage
+    {
+        public JsonHistoryMessage(DateTimeOffset dateTimeUtc, int messageId, int? messageThreadId, int? replyToMessageId, long? fromUserId, string? fromUsername, string? fromFirstName, string? fromLastName, string? text, bool isLlmReplyToMessage)
+        {
+            DateTimeUtc = dateTimeUtc;
+            MessageId = messageId;
+            MessageThreadId = messageThreadId;
+            ReplyToMessageId = replyToMessageId;
+            FromUserId = fromUserId;
+            FromUsername = fromUsername;
+            FromFirstName = fromFirstName;
+            FromLastName = fromLastName;
+            Text = text;
+            IsLlmReplyToMessage = isLlmReplyToMessage;
+        }
+
+        public DateTimeOffset DateTimeUtc { get; }
+        public int MessageId { get; }
+        public int? MessageThreadId { get; }
+        public int? ReplyToMessageId { get; }
+        public long? FromUserId { get; }
+        public string? FromUsername { get; }
+        public string? FromFirstName { get; }
+        public string? FromLastName { get; }
+        public string? Text { get; }
+        public bool IsLlmReplyToMessage { get; }
     }
 
     private static partial class Log

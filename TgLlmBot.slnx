@@ -7,6 +7,10 @@
         <File Path="Directory.Build.props"/>
         <File Path="TgLlmBot.slnx.DotSettings"/>
     </Folder>
+    <Folder Name="/root/.config/">
+        <File Path=".config\dotnet-tools.json"/>
+        <File Path=".config\README.md"/>
+    </Folder>
     <Folder Name="/root/src/">
         <Project Path="src/TgLlmBot/TgLlmBot.csproj"/>
     </Folder>

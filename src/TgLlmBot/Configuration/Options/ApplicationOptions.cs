@@ -1,5 +1,6 @@
 ﻿using System.ComponentModel.DataAnnotations;
 using System.Diagnostics.CodeAnalysis;
+using TgLlmBot.Configuration.Options.DataAccess;
 using TgLlmBot.Configuration.Options.Llm;
 using TgLlmBot.Configuration.Options.Telegram;
 
@@ -13,4 +14,7 @@ public class ApplicationOptions
 
     [Required]
     public LlmOptions Llm { get; set; } = default!;
+
+    [Required]
+    public DataAccessOptions DataAccess { get; set; } = default!;
 }

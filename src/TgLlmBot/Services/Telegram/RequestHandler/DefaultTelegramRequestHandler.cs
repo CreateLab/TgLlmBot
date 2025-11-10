@@ -4,6 +4,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Telegram.Bot;
 using Telegram.Bot.Polling;
 using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums;
@@ -14,6 +15,7 @@ namespace TgLlmBot.Services.Telegram.RequestHandler;
 public sealed partial class DefaultTelegramRequestHandler : ITelegramRequestHandler
 {
     private readonly IHostApplicationLifetime _applicationLifetime;
+    private readonly TelegramBotClient _bot;
     private readonly ITelegramCommandDispatcher _commandDispatcher;
     private readonly ILogger<DefaultTelegramRequestHandler> _logger;
     private readonly DefaultTelegramRequestHandlerOptions _options;
@@ -22,7 +24,8 @@ public sealed partial class DefaultTelegramRequestHandler : ITelegramRequestHand
         DefaultTelegramRequestHandlerOptions options,
         ITelegramCommandDispatcher commandDispatcher,
         IHostApplicationLifetime applicationLifetime,
-        ILogger<DefaultTelegramRequestHandler> logger)
+        ILogger<DefaultTelegramRequestHandler> logger,
+        TelegramBotClient bot)
     {
         ArgumentNullException.ThrowIfNull(options);
         ArgumentNullException.ThrowIfNull(commandDispatcher);
@@ -32,6 +35,7 @@ public sealed partial class DefaultTelegramRequestHandler : ITelegramRequestHand
         _commandDispatcher = commandDispatcher;
         _applicationLifetime = applicationLifetime;
         _logger = logger;
+        _bot = bot;
     }
 
     public async Task OnMessageAsync(Message message, UpdateType type)

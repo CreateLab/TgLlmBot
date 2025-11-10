@@ -4,6 +4,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -19,7 +20,10 @@ using TgLlmBot.Commands.ChatWithLlm.Services;
 using TgLlmBot.Commands.DisplayHelp;
 using TgLlmBot.Configuration.Options;
 using TgLlmBot.Configuration.TypedConfiguration;
+using TgLlmBot.DataAccess;
+using TgLlmBot.DataAccess.Design;
 using TgLlmBot.Extensions.Configuration;
+using TgLlmBot.Services.DataAccess;
 using TgLlmBot.Services.Telegram.CommandDispatcher;
 using TgLlmBot.Services.Telegram.Markdown;
 using TgLlmBot.Services.Telegram.RequestHandler;
@@ -41,6 +45,7 @@ public partial class Program
             var builder = CreateHostApplicationBuilder(args, selfInfo);
             using (var host = builder.Build())
             {
+                await ApplyMigrations(host);
                 var hostLoggerFactory = host.Services.GetRequiredService<ILoggerFactory>();
                 var logger = hostLoggerFactory.CreateLogger<Program>();
                 LogApplicationStarting(logger);
@@ -62,6 +67,18 @@ public partial class Program
         }
 
         return exitCode;
+    }
+
+    [SuppressMessage("ReSharper", "ConvertToUsingDeclaration")]
+    [SuppressMessage("Style", "IDE0063:Use simple \'using\' statement")]
+    private static async Task ApplyMigrations(IHost host)
+    {
+        var scopeFactory = host.Services.GetRequiredService<IServiceScopeFactory>();
+        await using (var asyncScope = scopeFactory.CreateAsyncScope())
+        {
+            var dbContext = asyncScope.ServiceProvider.GetRequiredService<BotDbContext>();
+            await dbContext.Database.MigrateAsync(CancellationToken.None);
+        }
     }
 
     private static HostApplicationBuilder CreateHostApplicationBuilder(
@@ -148,6 +165,18 @@ public partial class Program
         // LLM Chat
         builder.Services.AddSingleton(new DefaultLlmChatHandlerOptions(config.Telegram.BotName, config.Llm.DefaultResponse));
         builder.Services.AddSingleton<ILlmChatHandler, DefaultLlmChatHandler>();
+        // DataAccess
+        builder.Services.AddDbContext<BotDbContext>(dbContextOptions =>
+        {
+            dbContextOptions.UseNpgsql(
+                config.DataAccess.PostgresConnectionString,
+                options =>
+                {
+                    options.SetPostgresVersion(18, 0);
+                    options.MigrationsAssembly(typeof(DesignTimeBotDbContextFactory).Assembly);
+                });
+        });
+        builder.Services.AddSingleton<ITelegramMessageStorage, DefaultTelegramMessageStorage>();
         return builder;
     }
 

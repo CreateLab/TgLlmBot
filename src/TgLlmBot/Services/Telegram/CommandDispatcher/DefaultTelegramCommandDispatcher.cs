@@ -5,6 +5,7 @@ using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums;
 using TgLlmBot.Commands.ChatWithLlm;
 using TgLlmBot.Commands.DisplayHelp;
+using TgLlmBot.Services.DataAccess;
 using TgLlmBot.Services.Telegram.SelfInformation;
 
 namespace TgLlmBot.Services.Telegram.CommandDispatcher;
@@ -13,6 +14,7 @@ public class DefaultTelegramCommandDispatcher : ITelegramCommandDispatcher
 {
     private readonly ChatWithLlmCommandHandler _chatWithLlmCommandHandler;
     private readonly DisplayHelpCommandHandler _displayHelpCommandHandler;
+    private readonly ITelegramMessageStorage _messageStorage;
     private readonly DefaultTelegramCommandDispatcherOptions _options;
     private readonly ITelegramSelfInformation _selfInformation;
 
@@ -20,16 +22,19 @@ public class DefaultTelegramCommandDispatcher : ITelegramCommandDispatcher
         DefaultTelegramCommandDispatcherOptions options,
         ITelegramSelfInformation selfInformation,
         DisplayHelpCommandHandler displayHelpCommandHandler,
-        ChatWithLlmCommandHandler chatWithLlmCommandHandler)
+        ChatWithLlmCommandHandler chatWithLlmCommandHandler,
+        ITelegramMessageStorage messageStorage)
     {
         ArgumentNullException.ThrowIfNull(options);
         ArgumentNullException.ThrowIfNull(selfInformation);
         ArgumentNullException.ThrowIfNull(displayHelpCommandHandler);
         ArgumentNullException.ThrowIfNull(chatWithLlmCommandHandler);
+        ArgumentNullException.ThrowIfNull(messageStorage);
         _options = options;
         _selfInformation = selfInformation;
         _displayHelpCommandHandler = displayHelpCommandHandler;
         _chatWithLlmCommandHandler = chatWithLlmCommandHandler;
+        _messageStorage = messageStorage;
     }
 
     public async Task HandleMessageAsync(Message? message, UpdateType type, CancellationToken cancellationToken)
@@ -41,6 +46,8 @@ public class DefaultTelegramCommandDispatcher : ITelegramCommandDispatcher
             return;
         }
 
+        var self = _selfInformation.GetSelf();
+        await _messageStorage.StoreMessageAsync(message, self, cancellationToken);
         switch (message.Text)
         {
             case "!help":
@@ -51,18 +58,15 @@ public class DefaultTelegramCommandDispatcher : ITelegramCommandDispatcher
                 }
         }
 
-        var self = _selfInformation.GetSelf();
         var prompt = message.Text ?? message.Caption;
         if (message.Chat.Type == ChatType.Private)
         {
             var command = new ChatWithLlmCommand(message, type, self, prompt);
             await _chatWithLlmCommandHandler.HandleAsync(command, cancellationToken);
-            return;
         }
-
-        if (message.Chat.Type is ChatType.Group or ChatType.Supergroup)
+        else if (message.Chat.Type is ChatType.Group or ChatType.Supergroup)
         {
-            if ((prompt?.StartsWith(_options.BotName, StringComparison.InvariantCultureIgnoreCase) is true)
+            if (prompt?.StartsWith(_options.BotName, StringComparison.InvariantCultureIgnoreCase) is true
                 || (message.ReplyToMessage?.From is not null && message.ReplyToMessage.From.Id == self.Id))
             {
                 var command = new ChatWithLlmCommand(message, type, self, prompt);
